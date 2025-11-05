@@ -22,9 +22,14 @@ export const AuthProvider = ({ children }) => {
     };
 
     const logout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
         setUser(null);
+        localStorage.removeItem('token');
+        sessionStorage.clear();
+
+        // Clear navigation history and force reload
+        if (typeof window !== 'undefined') {
+            window.location.replace('/login');
+        }
     };
 
     return (
