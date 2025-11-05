@@ -1,24 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { recruiter } from '../utils/api';
+import { useNavigate } from 'react-router-dom';
 import {
     Briefcase, Users, FileText, Eye, Download,
     CheckCircle, XCircle, Clock, Mail, Phone,
     GraduationCap, Calendar, BookOpen
 } from 'lucide-react';
+import CreateJobModal from './CreateJobModal';
 
 const RecruiterDashboard = () => {
-    const { user } = useAuth();
+    const { user, logout } = useAuth();
+    const navigate = useNavigate();
     const [myJobs, setMyJobs] = useState([]);
     const [selectedJob, setSelectedJob] = useState(null);
     const [applications, setApplications] = useState([]);
     const [selectedApplication, setSelectedApplication] = useState(null);
     const [activeTab, setActiveTab] = useState('jobs');
     const [loading, setLoading] = useState(true);
+    const [showCreateModal, setShowCreateModal] = useState(false);
+    const [creating, setCreating] = useState(false);
 
+    // Redirect non-recruiter users away and fetch jobs when we have the user
     useEffect(() => {
+        if (!user) return;
+        // If role is not recruiter, redirect (replace so back button doesn't go back to previous auth pages)
+        if (user.role !== 'RECRUITER') {
+            const target = user.role === 'STUDENT' ? '/student-dashboard' : '/login';
+            navigate(target, { replace: true });
+            return;
+        }
         fetchMyJobs();
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user]);
 
     const fetchMyJobs = async () => {
         try {
@@ -46,6 +60,25 @@ const RecruiterDashboard = () => {
         setActiveTab('applications');
     };
 
+    const handleCreate = async (jobData) => {
+        if (!user) {
+            alert('You must be logged in');
+            return;
+        }
+        setCreating(true);
+        try {
+            await recruiter.createJob(user.userId, jobData);
+            alert('Job created successfully');
+            setShowCreateModal(false);
+            fetchMyJobs();
+        } catch (err) {
+            console.error('Create job error', err);
+            alert(err.response?.data?.message || 'Failed to create job');
+        } finally {
+            setCreating(false);
+        }
+    };
+
     const handleStatusUpdate = async (applicationId, status) => {
         try {
             await recruiter.updateApplicationStatus(user.userId, applicationId, status);
@@ -56,16 +89,61 @@ const RecruiterDashboard = () => {
         }
     };
 
-    const handleDownloadResume = (resumeUrl) => {
-        if (resumeUrl) {
-            window.open(`http://localhost:8080${resumeUrl}`, '_blank');
-        } else {
-            alert('No resume available');
+    // Try to open the latest resume for a student (best-effort fetch of latest student data)
+    const handleDownloadResume = async (maybeResumeUrl, studentId) => {
+        try {
+            // If we have a studentId, attempt to fetch latest student profile (API variations handled defensively)
+            let latestResume = maybeResumeUrl;
+            if (studentId) {
+                try {
+                    // Try common candidate endpoints - adjust to your API shape if necessary
+                    const res = await (recruiter.getStudent ? recruiter.getStudent(user.userId, studentId) : recruiter.getStudentById?.(studentId));
+                    const latestStudent = res?.data?.data || res?.data || null;
+                    if (latestStudent?.resumeUrl) latestResume = latestStudent.resumeUrl;
+                } catch (e) {
+                    // fallback: keep existing resumeUrl
+                }
+            }
+
+            if (latestResume) {
+                window.open(`http://localhost:8080${latestResume}`, '_blank');
+            } else {
+                alert('No resume available');
+            }
+        } catch (e) {
+            console.error('Download resume error', e);
+            alert('Failed to download resume');
         }
     };
 
-    const viewApplicationDetails = (application) => {
-        setSelectedApplication(application);
+    // When selecting an application, try to get the latest student profile and merge so UI shows most recent resume/fields
+    const viewApplicationDetails = async (application) => {
+        if (!application) return;
+        let latestStudent = null;
+        try {
+            const studentId = application.student?.id;
+            if (studentId) {
+                const res = await (recruiter.getStudent ? recruiter.getStudent(user.userId, studentId) : recruiter.getStudentById?.(studentId));
+                latestStudent = res?.data?.data || res?.data || null;
+            }
+        } catch (err) {
+            // ignore and use the application snapshot
+        }
+        const merged = {
+            ...application,
+            student: {
+                ...(application.student || {}),
+                ...(latestStudent || {})
+            }
+        };
+        setSelectedApplication(merged);
+    };
+
+    const handleLogout = () => {
+        try { logout?.(); } catch (e) { /* ignore */ }
+        try { localStorage.removeItem('token'); sessionStorage.clear(); } catch (e) { /* ignore */ }
+        // Replace history so back button won't go to previous authenticated pages
+        window.location.replace('/login');
     };
 
     if (loading) {
@@ -75,15 +153,25 @@ const RecruiterDashboard = () => {
     return (
         <div className="min-h-screen bg-gray-50">
             <div className="max-w-7xl mx-auto px-4 py-8">
-                <h1 className="text-3xl font-bold mb-8">Recruiter Dashboard</h1>
+                <div className="flex justify-between items-center mb-8">
+                    <h1 className="text-3xl font-bold">Recruiter Dashboard</h1>
+                    <div>
+                        <button
+                            onClick={() => setShowCreateModal(true)}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+                        >
+                            Create Job
+                        </button>
+                    </div>
+                </div>
 
-                {/* Tabs */}
+
                 <div className="flex gap-4 mb-6">
                     <button
                         onClick={() => setActiveTab('jobs')}
                         className={`px-6 py-3 rounded-lg ${activeTab === 'jobs'
-                                ? 'bg-green-600 text-white'
-                                : 'bg-white text-gray-600'
+                            ? 'bg-green-600 text-white'
+                            : 'bg-white text-gray-600'
                             }`}
                     >
                         <Briefcase className="inline mr-2" size={20} />
@@ -93,8 +181,8 @@ const RecruiterDashboard = () => {
                         <button
                             onClick={() => setActiveTab('applications')}
                             className={`px-6 py-3 rounded-lg ${activeTab === 'applications'
-                                    ? 'bg-green-600 text-white'
-                                    : 'bg-white text-gray-600'
+                                ? 'bg-green-600 text-white'
+                                : 'bg-white text-gray-600'
                                 }`}
                         >
                             <Users className="inline mr-2" size={20} />
@@ -103,7 +191,14 @@ const RecruiterDashboard = () => {
                     )}
                 </div>
 
-                {/* Jobs Tab */}
+                <CreateJobModal
+                    isOpen={showCreateModal}
+                    onClose={() => setShowCreateModal(false)}
+                    onSubmit={handleCreate}
+                    submitting={creating}
+                />
+
+
                 {activeTab === 'jobs' && (
                     <div className="grid gap-6">
                         {myJobs.map((job) => (
@@ -130,10 +225,10 @@ const RecruiterDashboard = () => {
                     </div>
                 )}
 
-                {/* Applications Tab */}
+
                 {activeTab === 'applications' && (
                     <div className="grid lg:grid-cols-2 gap-6">
-                        {/* Applications List */}
+
                         <div className="bg-white rounded-lg shadow-md p-6">
                             <h2 className="text-2xl font-bold mb-6">
                                 Applications ({applications.length})
@@ -162,8 +257,8 @@ const RecruiterDashboard = () => {
                                                     </p>
                                                 </div>
                                                 <span className={`px-3 py-1 rounded-full text-sm ${app.status === 'ACCEPTED' ? 'bg-green-100 text-green-800' :
-                                                        app.status === 'REJECTED' ? 'bg-red-100 text-red-800' :
-                                                            'bg-yellow-100 text-yellow-800'
+                                                    app.status === 'REJECTED' ? 'bg-red-100 text-red-800' :
+                                                        'bg-yellow-100 text-yellow-800'
                                                     }`}>
                                                     {app.status}
                                                 </span>
@@ -174,7 +269,7 @@ const RecruiterDashboard = () => {
                                             </p>
 
                                             <div className="flex gap-2 mt-3">
-                                                {app.status === 'PENDING' && (
+                                                {app.status === 'APPLIED' && (
                                                     <>
                                                         <button
                                                             onClick={(e) => {
@@ -205,13 +300,13 @@ const RecruiterDashboard = () => {
                             )}
                         </div>
 
-                        {/* Application Details */}
+
                         <div className="bg-white rounded-lg shadow-md p-6">
                             <h2 className="text-2xl font-bold mb-6">Applicant Details</h2>
 
                             {selectedApplication ? (
                                 <div className="space-y-6">
-                                    {/* Student Info */}
+
                                     <div>
                                         <h3 className="text-xl font-bold mb-3">
                                             {selectedApplication.student?.fullName || 'Unknown'}
@@ -253,7 +348,7 @@ const RecruiterDashboard = () => {
                                         </div>
                                     </div>
 
-                                    {/* Bio */}
+
                                     {selectedApplication.student?.bio && (
                                         <div>
                                             <h4 className="font-bold mb-2">Bio</h4>
@@ -263,7 +358,7 @@ const RecruiterDashboard = () => {
                                         </div>
                                     )}
 
-                                    {/* Skills */}
+
                                     {selectedApplication.student?.skills && (
                                         <div>
                                             <h4 className="font-bold mb-2">Skills</h4>
@@ -280,7 +375,7 @@ const RecruiterDashboard = () => {
                                         </div>
                                     )}
 
-                                    {/* Cover Letter */}
+
                                     {selectedApplication.coverLetter && (
                                         <div>
                                             <h4 className="font-bold mb-2">Cover Letter</h4>
@@ -290,14 +385,45 @@ const RecruiterDashboard = () => {
                                         </div>
                                     )}
 
-                                    {/* Resume Download */}
-                                    <button
-                                        onClick={() => handleDownloadResume(selectedApplication.student?.resumeUrl)}
-                                        className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 flex items-center justify-center"
-                                    >
-                                        <Download className="mr-2" size={20} />
-                                        Download Resume
-                                    </button>
+                                    {/* Add status and action buttons */}
+                                    <div className="border-t pt-4 mt-4">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h4 className="font-bold">Application Status:</h4>
+                                            <span className={`px-3 py-1 rounded-full text-sm ${selectedApplication.status === 'ACCEPTED' ? 'bg-green-100 text-green-800' :
+                                                selectedApplication.status === 'REJECTED' ? 'bg-red-100 text-red-800' :
+                                                    'bg-yellow-100 text-yellow-800'
+                                                }`}>
+                                                {selectedApplication.status || 'PENDING'}
+                                            </span>
+                                        </div>
+
+                                        {(!selectedApplication.status || selectedApplication.status === 'PENDING') && (
+                                            <div className="flex gap-3 mb-4">
+                                                <button
+                                                    onClick={() => handleStatusUpdate(selectedApplication.id, 'ACCEPTED')}
+                                                    className="flex-1 bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700"
+                                                >
+                                                    <CheckCircle className="inline mr-2" size={20} />
+                                                    Accept Application
+                                                </button>
+                                                <button
+                                                    onClick={() => handleStatusUpdate(selectedApplication.id, 'REJECTED')}
+                                                    className="flex-1 bg-red-600 text-white px-4 py-3 rounded-lg hover:bg-red-700"
+                                                >
+                                                    <XCircle className="inline mr-2" size={20} />
+                                                    Reject Application
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        <button
+                                            onClick={() => handleDownloadResume(selectedApplication.student?.resumeUrl, selectedApplication.student?.id)}
+                                            className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 flex items-center justify-center"
+                                        >
+                                            <Download className="mr-2" size={20} />
+                                            Download Resume
+                                        </button>
+                                    </div>
                                 </div>
                             ) : (
                                 <p className="text-gray-600 text-center py-8">
@@ -313,282 +439,3 @@ const RecruiterDashboard = () => {
 };
 
 export default RecruiterDashboard;
-
-// import React, { useState, useEffect } from 'react';
-// import { useAuth } from '../context/AuthContext';
-// import { recruiter } from '../utils/api';
-// import { Plus, Briefcase, Users, Edit, Trash2 } from 'lucide-react';
-
-// const RecruiterDashboard = () => {
-//     const { user } = useAuth();
-//     const [jobs, setJobs] = useState([]);
-//     const [activeTab, setActiveTab] = useState('jobs');
-//     const [showJobForm, setShowJobForm] = useState(false);
-//     const [selectedJob, setSelectedJob] = useState(null);
-//     const [loading, setLoading] = useState(true);
-//     const [jobForm, setJobForm] = useState({
-//         title: '',
-//         companyName: '',
-//         description: '',
-//         requirements: '',
-//         type: 'JOB',
-//         location: '',
-//         salary: '',
-//         duration: '',
-//         applicationDeadline: '',
-//         status: 'ACTIVE'
-//     });
-
-//     useEffect(() => {
-//         fetchJobs();
-//     }, []);
-
-//     const fetchJobs = async () => {
-//         try {
-//             const res = await recruiter.getMyJobs(user.userId);
-//             setJobs(res.data.data);
-//         } catch (error) {
-//             console.error('Error fetching jobs:', error);
-//         } finally {
-//             setLoading(false);
-//         }
-//     };
-
-//     const handleSubmitJob = async (e) => {
-//         e.preventDefault();
-//         try {
-//             if (selectedJob) {
-//                 await recruiter.updateJob(user.userId, selectedJob.id, jobForm);
-//                 alert('Job updated successfully!');
-//             } else {
-//                 await recruiter.createJob(user.userId, jobForm);
-//                 alert('Job created successfully!');
-//             }
-//             setShowJobForm(false);
-//             setSelectedJob(null);
-//             setJobForm({
-//                 title: '',
-//                 companyName: '',
-//                 description: '',
-//                 requirements: '',
-//                 type: 'JOB',
-//                 location: '',
-//                 salary: '',
-//                 duration: '',
-//                 applicationDeadline: '',
-//                 status: 'ACTIVE'
-//             });
-//             fetchJobs();
-//         } catch (error) {
-//             alert('Failed to save job');
-//         }
-//     };
-
-//     const handleEditJob = (job) => {
-//         setSelectedJob(job);
-//         setJobForm(job);
-//         setShowJobForm(true);
-//     };
-
-//     const handleDeleteJob = async (jobId) => {
-//         if (window.confirm('Are you sure you want to delete this job?')) {
-//             try {
-//                 await recruiter.deleteJob(user.userId, jobId);
-//                 alert('Job deleted successfully!');
-//                 fetchJobs();
-//             } catch (error) {
-//                 alert('Failed to delete job');
-//             }
-//         }
-//     };
-
-//     if (loading) return <div className="flex justify-center items-center min-h-screen">Loading...</div>;
-
-//     return (
-//         <div className="min-h-screen bg-gray-50">
-//             <div className="max-w-7xl mx-auto px-4 py-8">
-//                 <div className="flex justify-between items-center mb-8">
-//                     <h1 className="text-3xl font-bold">Recruiter Dashboard</h1>
-//                     <button
-//                         onClick={() => {
-//                             setShowJobForm(true);
-//                             setSelectedJob(null);
-//                             setJobForm({
-//                                 title: '',
-//                                 companyName: '',
-//                                 description: '',
-//                                 requirements: '',
-//                                 type: 'JOB',
-//                                 location: '',
-//                                 salary: '',
-//                                 duration: '',
-//                                 applicationDeadline: '',
-//                                 status: 'ACTIVE'
-//                             });
-//                         }}
-//                         className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2"
-//                     >
-//                         <Plus size={20} />
-//                         Post New Job
-//                     </button>
-//                 </div>
-
-//                 {showJobForm && (
-//                     <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-//                         <h2 className="text-2xl font-bold mb-4">{selectedJob ? 'Edit Job' : 'Create New Job'}</h2>
-//                         <form onSubmit={handleSubmitJob}>
-//                             <div className="grid md:grid-cols-2 gap-4 mb-4">
-//                                 <div>
-//                                     <label className="block text-gray-700 mb-2">Job Title*</label>
-//                                     <input
-//                                         type="text"
-//                                         required
-//                                         className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-//                                         value={jobForm.title}
-//                                         onChange={(e) => setJobForm({ ...jobForm, title: e.target.value })}
-//                                     />
-//                                 </div>
-//                                 <div>
-//                                     <label className="block text-gray-700 mb-2">Company Name*</label>
-//                                     <input
-//                                         type="text"
-//                                         required
-//                                         className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-//                                         value={jobForm.companyName}
-//                                         onChange={(e) => setJobForm({ ...jobForm, companyName: e.target.value })}
-//                                     />
-//                                 </div>
-//                                 <div>
-//                                     <label className="block text-gray-700 mb-2">Type*</label>
-//                                     <select
-//                                         className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-//                                         value={jobForm.type}
-//                                         onChange={(e) => setJobForm({ ...jobForm, type: e.target.value })}
-//                                     >
-//                                         <option value="JOB">Job</option>
-//                                         <option value="INTERNSHIP">Internship</option>
-//                                     </select>
-//                                 </div>
-//                                 <div>
-//                                     <label className="block text-gray-700 mb-2">Location</label>
-//                                     <input
-//                                         type="text"
-//                                         className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-//                                         value={jobForm.location}
-//                                         onChange={(e) => setJobForm({ ...jobForm, location: e.target.value })}
-//                                     />
-//                                 </div>
-//                                 <div>
-//                                     <label className="block text-gray-700 mb-2">Salary</label>
-//                                     <input
-//                                         type="text"
-//                                         className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-//                                         value={jobForm.salary}
-//                                         onChange={(e) => setJobForm({ ...jobForm, salary: e.target.value })}
-//                                     />
-//                                 </div>
-//                                 <div>
-//                                     <label className="block text-gray-700 mb-2">Duration</label>
-//                                     <input
-//                                         type="text"
-//                                         className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-//                                         value={jobForm.duration}
-//                                         onChange={(e) => setJobForm({ ...jobForm, duration: e.target.value })}
-//                                     />
-//                                 </div>
-//                             </div>
-
-//                             <div className="mb-4">
-//                                 <label className="block text-gray-700 mb-2">Description*</label>
-//                                 <textarea
-//                                     required
-//                                     className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-//                                     rows="4"
-//                                     value={jobForm.description}
-//                                     onChange={(e) => setJobForm({ ...jobForm, description: e.target.value })}
-//                                 />
-//                             </div>
-
-//                             <div className="mb-4">
-//                                 <label className="block text-gray-700 mb-2">Requirements</label>
-//                                 <textarea
-//                                     className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-//                                     rows="4"
-//                                     value={jobForm.requirements}
-//                                     onChange={(e) => setJobForm({ ...jobForm, requirements: e.target.value })}
-//                                 />
-//                             </div>
-
-//                             <div className="flex gap-4">
-//                                 <button type="submit" className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700">
-//                                     {selectedJob ? 'Update Job' : 'Create Job'}
-//                                 </button>
-//                                 <button
-//                                     type="button"
-//                                     onClick={() => {
-//                                         setShowJobForm(false);
-//                                         setSelectedJob(null);
-//                                     }}
-//                                     className="bg-gray-300 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-400"
-//                                 >
-//                                     Cancel
-//                                 </button>
-//                             </div>
-//                         </form>
-//                     </div>
-//                 )}
-
-//                 <div className="bg-white rounded-lg shadow-md">
-//                     <div className="p-6">
-//                         <h2 className="text-2xl font-bold mb-6">My Job Postings ({jobs.length})</h2>
-
-//                         {jobs.length === 0 ? (
-//                             <p className="text-gray-500">No jobs posted yet</p>
-//                         ) : (
-//                             <div className="space-y-4">
-//                                 {jobs.map((job) => (
-//                                     <div key={job.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
-//                                         <div className="flex justify-between items-start">
-//                                             <div className="flex-1">
-//                                                 <h3 className="text-xl font-bold mb-2">{job.title}</h3>
-//                                                 <p className="text-gray-600 mb-2">{job.companyName}</p>
-//                                                 <div className="flex gap-4 text-sm text-gray-500 mb-2">
-//                                                     <span>{job.type}</span>
-//                                                     <span>•</span>
-//                                                     <span>{job.location}</span>
-//                                                     {job.salary && (
-//                                                         <>
-//                                                             <span>•</span>
-//                                                             <span>{job.salary}</span>
-//                                                         </>
-//                                                     )}
-//                                                 </div>
-//                                                 <p className="text-gray-700">{job.description.substring(0, 150)}...</p>
-//                                             </div>
-//                                             <div className="flex gap-2 ml-4">
-//                                                 <button
-//                                                     onClick={() => handleEditJob(job)}
-//                                                     className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
-//                                                 >
-//                                                     <Edit size={20} />
-//                                                 </button>
-//                                                 <button
-//                                                     onClick={() => handleDeleteJob(job.id)}
-//                                                     className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-//                                                 >
-//                                                     <Trash2 size={20} />
-//                                                 </button>
-//                                             </div>
-//                                         </div>
-//                                     </div>
-//                                 ))}
-//                             </div>
-//                         )}
-//                     </div>
-//                 </div>
-//             </div>
-//         </div>
-//     );
-// };
-
-// export default RecruiterDashboard;

@@ -7,6 +7,8 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Jobs from './pages/Jobs';
+import StudentProfile from './components/StudentProfile';
+import RecruiterDashboard from './components/RecruiterDashboard';
 
 const PrivateRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -34,6 +36,15 @@ function App() {
               element={
                 <PrivateRoute>
                   <Dashboard />
+                </PrivateRoute>
+              }
+            />
+            <Route path="/student-profile" element={<StudentProfile />} />
+            <Route
+              path="/recruiter-dashboard"
+              element={
+                <PrivateRoute>
+                  <RecruiterDashboard />
                 </PrivateRoute>
               }
             />

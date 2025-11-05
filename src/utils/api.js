@@ -56,6 +56,7 @@ export const student = {
     toggleBookmark: (studentId, jobId) =>
         api.post(`/student/bookmark?studentId=${studentId}&jobId=${jobId}`),
     getBookmarks: (studentId) => api.get(`/student/bookmarks/${studentId}`),
+    getJobDetails: (jobId) => api.get(`/jobs/public/${jobId}`),
 };
 
 export const recruiter = {
