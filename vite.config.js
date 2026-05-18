@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { writeFileSync } from 'fs'
+import { writeFileSync, mkdirSync } from 'fs'
 
 export default defineConfig({
   plugins: [
@@ -8,7 +8,9 @@ export default defineConfig({
     {
       name: 'generate-redirects',
       closeBundle() {
-        writeFileSync('dist/_redirects', '/*    /index.html    200')
+        mkdirSync('dist', { recursive: true })
+        writeFileSync('dist/_redirects', '/*    /index.html    200\n')
+        console.log('✓ _redirects file created in dist/')
       }
     }
   ],
